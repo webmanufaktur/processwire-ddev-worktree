@@ -51,9 +51,27 @@ Worktree:       ~/worktrees/my-feature/
 
 ### As a git submodule (recommended)
 
+Add to your ProcessWire project:
+
 ```bash
 git submodule add https://github.com/webmanufaktur/processwire-ddev-worktree.git ddev-worktree
+git commit -m "chore: add processwire-ddev-worktree as submodule"
 ```
+
+After cloning a project that uses this submodule, initialize and fetch it:
+
+```bash
+git submodule init
+git submodule update
+```
+
+Or do both at once when cloning:
+
+```bash
+git clone --recurse-submodules https://github.com/your-org/your-project.git
+```
+
+The script will then be available at `ddev-worktree/ddev-worktree.sh`.
 
 ### Standalone
 
