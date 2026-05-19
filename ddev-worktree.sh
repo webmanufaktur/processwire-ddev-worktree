@@ -91,12 +91,36 @@ sanitize_project_name() {
 
 # ---------------------------------------------------------------------------
 # Resolve WORKTREE_PATH argument (defaults to cwd).
+# Rejects cases where the script is run from inside the ddev-worktree/
+# submodule directory itself.
 # ---------------------------------------------------------------------------
 resolve_worktree_path() {
     if [[ -n "${1:-}" ]]; then
         cd "$1" 2>/dev/null || die "Directory '$1' does not exist."
     fi
-    pwd
+
+    local resolved
+    resolved="$(pwd)"
+
+    # Guard: if .git exists as a file, check whether its gitdir path contains
+    # "/modules/" — that tells us we're inside the ddev-worktree submodule,
+    # not at the worktree root. Submodules nested in a worktree have their
+    # gitdir pointing to worktrees/<name>/modules/<submodule-name>.
+    local dot_git="$resolved/.git"
+    if [[ -f "$dot_git" ]]; then
+        local gitdir
+        gitdir="$(sed -n 's/^gitdir: //p' "$dot_git")"
+        if [[ "$gitdir" == */modules/* ]]; then
+            die "You appear to be running from inside the 'ddev-worktree' submodule." \
+                "Run this script from the worktree root instead:" \
+                "  bash $(basename "$0") setup /path/to/worktree" \
+                "" \
+                "Or pass the worktree path explicitly:" \
+                "  bash $(basename "$0") setup $(git rev-parse --show-toplevel)"
+        fi
+    fi
+
+    echo "$resolved"
 }
 
 # ---------------------------------------------------------------------------
