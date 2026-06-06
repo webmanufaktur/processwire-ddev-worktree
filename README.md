@@ -4,11 +4,15 @@ Bash script to run independent [DDEV](https://ddev.readthedocs.io/) environments
 
 One command to go from a bare worktree to a fully working local ProcessWire dev server with database.
 
+Works with both standard repos and bare-repo layouts where every clone is a worktree of a central bare git repository.
+
 ## Why this exists
 
 ProcessWire projects use DDEV for local development. DDEV identifies a project by the `.ddev/` directory location and bind-mounts that directory's parent as the web root. Since `.ddev/` is gitignored and only exists in the main worktree, any git worktree has no DDEV environment — you can't test code changes locally without merging back to the main branch.
 
 ProcessWire adds an extra wrinkle: the `site/config-dev.php` file (also gitignored) contains DDEV database credentials and an `httpHosts` whitelist that must match the DDEV URL. A worktree needs its own copy with the correct hostname.
+
+Some teams prefer a bare-repo worktree layout: one central bare repository (no working tree) with every clone — including the "main" one — as a worktree of that bare repo. This script supports that layout too, automatically detecting it and locating the worktree that has `.ddev/` set up.
 
 This script handles all of that automatically.
 
@@ -34,6 +38,8 @@ Worktree:       ~/worktrees/my-feature/
     config.local.yaml    ← name: pw-my-feature (auto-generated)
   site/config-dev.php    ← httpHosts includes pw-my-feature.ddev.site
 ```
+
+In a bare-repo setup there is no fixed "main worktree" on disk — the script auto-discovers it by walking `git worktree list` and picking the first worktree that has a `.ddev/` directory. The preferred branch is `master` by default and can be overridden via the `DDEV_WORKTREE_MAIN_BRANCH` environment variable. See [Bare Repo Layouts](#bare-repo-layouts) for details.
 
 ### ProcessWire-specific behavior
 
@@ -129,6 +135,34 @@ The project name is derived from the worktree's directory name, lowercased and s
 | `shiny-harbor` | `pw-shiny-harbor` | `https://pw-shiny-harbor.ddev.site` |
 | `fix/seo-migration` | `pw-seo-migration` | `https://pw-seo-migration.ddev.site` |
 
+### Bare Repo Layouts
+
+Some setups use a central bare git repository where every clone — including the "main" one — is a worktree of that bare repo:
+
+```
+~/pwdevbase/                       ← bare git repo (no working tree)
+  .git/                            ← bare repo data (HEAD, objects, refs, worktrees/)
+
+~/pwdevbase/master/                ← worktree for master branch (has .ddev/ set up)
+  .git → gitdir: …/pwdevbase/.git/worktrees/master
+  .ddev/
+  site/config-dev.php
+
+~/pwdevbase/feature-x/             ← worktree for feature-x branch
+  .git → gitdir: …/pwdevbase/.git/worktrees/feature-x
+  (no .ddev/ yet)
+```
+
+The script auto-detects this case by running `git rev-parse --is-bare-repository` against the worktree's `gitdir`. When the bare case is detected, it walks `git worktree list --porcelain` and picks the first worktree that has a `.ddev/` directory — stopping early if that worktree's branch matches the preferred main branch.
+
+The preferred branch is `master` by default and can be overridden via the `DDEV_WORKTREE_MAIN_BRANCH` environment variable:
+
+```bash
+DDEV_WORKTREE_MAIN_BRANCH=main bash ddev-worktree.sh setup
+```
+
+If no worktree with `.ddev/` is found, the script exits with a clear error — you need to run `ddev` config in your main worktree (e.g. `~/pwdevbase/master/`) first.
+
 ### Symlinked Files
 
 Shared config is symlinked from the main worktree's `.ddev/` so settings stay in sync:
@@ -172,6 +206,14 @@ ddev exec php index.php --at-sitemap-generate
 git worktree remove ../my-feature
 ```
 
+For a bare-repo setup, the same flow applies — just run the script from inside the bare repo's worktree (not the bare repo root):
+
+```bash
+# Bare-repo setup (e.g. ~/pwdevbase/ is the bare repo, ~/pwdevbase/master/ is the main worktree)
+cd ~/pwdevbase/feature-x
+bash ../ddev-worktree/ddev-worktree.sh setup
+```
+
 ## Using with other frameworks
 
 While designed for ProcessWire, the core mechanism — symlinking shared DDEV config and creating an isolated project per worktree — works for any PHP application. The ProcessWire-specific part is the `site/config-dev.php` generation with `httpHosts` rewriting.
@@ -189,7 +231,7 @@ The `pw-` prefix on project names is a convention — you can change it in the `
 - The main worktree must have a `.ddev/` directory set up before running `init`.
 - `import-db` requires the main project's DDEV to be running (to export from it). `setup` starts it automatically if needed.
 - Each worktree consumes its own pair of Docker containers (web + db). Running many worktrees simultaneously uses more resources.
-- The script is designed for git worktrees (where `.git` is a file, not a directory). It will refuse to run in the main worktree.
+- The script is designed for git worktrees (where `.git` is a file, not a directory). It will refuse to run in a normal repo root. In a bare-repo setup, run it from a worktree of the bare repo, not from the bare repo root itself. The script also requires that the chosen "main" worktree already has `.ddev/` configured — in a bare-repo layout, that's the worktree matching `$DDEV_WORKTREE_MAIN_BRANCH` (default `master`).
 
 ## License
 
