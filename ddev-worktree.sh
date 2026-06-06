@@ -27,6 +27,14 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# Branch name preferred when picking the "main" worktree in a bare-repo setup.
+# Override with the DDEV_WORKTREE_MAIN_BRANCH env var.
+PREFERRED_MAIN_BRANCH="${DDEV_WORKTREE_MAIN_BRANCH:-master}"
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -68,7 +76,57 @@ resolve_main_worktree() {
     local main_worktree
     main_worktree="$(cd "$gitdir/../../.." && pwd)"
 
-    if [[ ! -d "$main_worktree/.git" ]]; then
+    # --- Bare repo detection ---------------------------------------------------
+    # In a bare-repo worktree setup (e.g. pwdevbase/.git is the bare repo and
+    # both master/ and testing1/ are worktrees), the above resolution lands on
+    # the bare repo root. It has a .git/ directory but no project files.
+    # Instead, we need to find the worktree that has .ddev/ set up.
+    #
+    # `git worktree list --porcelain` emits multi-line records separated by
+    # blank lines, e.g.:
+    #   worktree /path/to/bare
+    #   bare
+    #
+    #   worktree /path/to/master-worktree
+    #   HEAD abc123
+    #   branch refs/heads/master
+    #
+    # We use awk to walk those records, drop the bare record (the bare repo
+    # root has no project files) and the worktree being set up, and emit
+    # `path<TAB>branch` so the bash loop can match the branch against
+    # $PREFERRED_MAIN_BRANCH and stop early when found.
+    local is_bare=""
+    is_bare="$(git -C "$gitdir" rev-parse --is-bare-repository 2>/dev/null || true)"
+    if [[ "$is_bare" == "true" ]]; then
+        local candidate=""
+        local wt_path=""
+        local wt_branch=""
+        while IFS=$'\t' read -r wt_path wt_branch; do
+            if [[ -d "$wt_path/.ddev" ]]; then
+                candidate="$wt_path"
+                # If this is the preferred main branch, stop immediately.
+                if [[ "$wt_branch" == "refs/heads/$PREFERRED_MAIN_BRANCH" ]]; then
+                    break
+                fi
+            fi
+        done < <(git -C "$gitdir" worktree list --porcelain 2>/dev/null | awk -v target="$worktree_dir" '
+            /^worktree / { path = substr($0, 10); is_bare = 0; branch = "" }
+            /^bare$/     { is_bare = 1 }
+            /^branch /   { branch = $2 }
+            /^$/         {
+                if (path != "" && !is_bare && path != target) {
+                    printf "%s\t%s\n", path, branch
+                }
+                path = ""; branch = ""; is_bare = 0
+            }
+        ')
+
+        if [[ -z "$candidate" ]]; then
+            die "Bare repo detected but no worktree with .ddev/ found." \
+                "Set up DDEV in your main worktree first."
+        fi
+        main_worktree="$candidate"
+    elif [[ ! -d "$main_worktree/.git" ]]; then
         die "Resolved main worktree '$main_worktree' does not have a .git/ directory."
     fi
 
@@ -146,7 +204,7 @@ cmd_setup() {
     local main_worktree
     main_worktree="$(resolve_main_worktree "$worktree_dir")"
 
-    local main_project_name
+    local main_project_name=""
     if [[ -f "$main_worktree/.ddev/config.yaml" ]]; then
         main_project_name="$(grep -E '^name:' "$main_worktree/.ddev/config.yaml" | head -1 | awk '{print $2}')"
     fi
@@ -326,7 +384,7 @@ cmd_import_db() {
     main_worktree="$(resolve_main_worktree "$worktree_dir")"
 
     # Read the main project's DDEV project name from its config
-    local main_project_name
+    local main_project_name=""
     if [[ -f "$main_worktree/.ddev/config.yaml" ]]; then
         main_project_name="$(grep -E '^name:' "$main_worktree/.ddev/config.yaml" | head -1 | awk '{print $2}')"
     fi
